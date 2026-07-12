@@ -1,0 +1,11 @@
+[project]
+name = "xquest"
+version = "1.0.0"
+description = "Meu app de tarefas e produtividade"
+
+[tool.flet]
+product = "XQuest"
+org = "com.emilylima"
+# O Flet busca automaticamente o arquivo assets/icon.png se você não especificar,
+# mas você pode forçar o caminho adicionando a linha abaixo para garantir:
+icon = "assets/icon.png"
