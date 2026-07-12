@@ -1,5 +1,7 @@
 import flet as ft
 import uuid
+import json
+import os
 
 
 # =====================================================================
@@ -14,6 +16,12 @@ COR_TEXTO_SECUNDARIO = "#9a9ab0"
 COR_SUCESSO = "#4caf50"
 COR_ANDAMENTO = "#ffb300"
 COR_BARRA_FUNDO = "#2a2a3d"
+
+# Pasta de dados persistente fornecida pelo próprio Flet (funciona tanto
+# em "flet run" no desktop quanto no app instalado no celular).
+DIRETORIO_DADOS = os.getenv("FLET_APP_STORAGE_DATA", ".")
+os.makedirs(DIRETORIO_DADOS, exist_ok=True)  # garante que a pasta existe
+CAMINHO_ARQUIVO_DADOS = os.path.join(DIRETORIO_DADOS, "missoes.json")
 
 
 def main(page: ft.Page):
@@ -60,6 +68,30 @@ def main(page: ft.Page):
             self.nova_missao = {}      # rascunho usado durante a criação
 
     estado = Estado()
+
+    # =============================================================
+    # PERSISTÊNCIA (arquivo JSON)
+    #
+    # Gravamos os dados em um arquivo dentro da pasta de dados
+    # persistente do Flet, então eles continuam disponíveis mesmo
+    # depois de fechar e abrir o app de novo.
+    # =============================================================
+
+    def salvar_estado():
+        try:
+            with open(CAMINHO_ARQUIVO_DADOS, "w", encoding="utf-8") as arquivo:
+                json.dump(estado.missoes, arquivo)
+        except Exception as ex:
+            print(f"Erro ao salvar estado: {ex}")
+
+    def carregar_estado():
+        try:
+            if os.path.exists(CAMINHO_ARQUIVO_DADOS):
+                with open(CAMINHO_ARQUIVO_DADOS, "r", encoding="utf-8") as arquivo:
+                    estado.missoes = json.load(arquivo)
+        except Exception as ex:
+            print(f"Erro ao carregar estado: {ex}")
+            estado.missoes = []
 
     # =============================================================
     # FUNÇÕES AUXILIARES DE DADOS
@@ -232,6 +264,7 @@ def main(page: ft.Page):
         def excluir(e):
             if missao in estado.missoes:
                 estado.missoes.remove(missao)
+                salvar_estado()
             page.pop_dialog()
             ir_para(tela_central)
 
@@ -428,6 +461,7 @@ def main(page: ft.Page):
 
         estado.missoes.append(missao)
         estado.nova_missao = {}
+        salvar_estado()
 
         ir_para(tela_central)
 
@@ -492,8 +526,10 @@ def main(page: ft.Page):
 
         if all(e["concluida"] for e in missao["etapas"]):
             missao["concluida"] = True
+            salvar_estado()
             ir_para(tela_missao_concluida, missao["id"])
         else:
+            salvar_estado()
             ir_para(tela_missao_detalhe, missao["id"])
 
     # =============================================================
@@ -528,6 +564,7 @@ def main(page: ft.Page):
     # INÍCIO DO APP
     # =============================================================
 
+    carregar_estado()
     tela_central()
 
 
