@@ -2,6 +2,7 @@ import flet as ft
 import uuid
 import json
 import os
+from datetime import date, datetime
 
 
 # =====================================================================
@@ -15,20 +16,74 @@ COR_PRIMARIA = "#7c4dff"
 COR_TEXTO_SECUNDARIO = "#9a9ab0"
 COR_SUCESSO = "#4caf50"
 COR_ANDAMENTO = "#ffb300"
+COR_ALERTA = "#e57373"
 COR_BARRA_FUNDO = "#2a2a3d"
 
-# Pasta de dados persistente fornecida pelo próprio Flet (funciona tanto
-# em "flet run" no desktop quanto no app instalado no celular).
+ALTURA_LISTA_MISSOES = 430
+DIAS_ALERTA_PRAZO = 3
+
+CATEGORIAS_FIXAS = ["Acadêmica", "Espiritual", "Pessoal"]
+CATEGORIA_OUTRO = "Outro"
+CATEGORIAS_GRAFICO = CATEGORIAS_FIXAS + [CATEGORIA_OUTRO]
+
+ICONE_CATEGORIA = {
+    "Acadêmica": "🎓",
+    "Espiritual": "🙏",
+    "Pessoal": "🌱",
+    CATEGORIA_OUTRO: "✨",
+}
+
+CORES_CATEGORIA = {
+    "Acadêmica": "#4dd0e1",
+    "Espiritual": "#ba68c8",
+    "Pessoal": "#81c784",
+    CATEGORIA_OUTRO: "#ffb74d",
+}
+
+
+def bucket_categoria(categoria):
+    return categoria if categoria in CATEGORIAS_FIXAS else CATEGORIA_OUTRO
+
+
+def formatar_data_br(data_iso):
+    if not data_iso:
+        return "-"
+    try:
+        return date.fromisoformat(data_iso).strftime("%d/%m/%Y")
+    except ValueError:
+        return "-"
+
+
+def texto_e_cor_prazo(missao):
+    if missao.get("concluida"):
+        return None
+
+    data_fim_texto = missao.get("data_fim")
+    if not data_fim_texto:
+        return None
+
+    try:
+        data_fim = date.fromisoformat(data_fim_texto)
+    except ValueError:
+        return None
+
+    dias_restantes = (data_fim - date.today()).days
+
+    if dias_restantes < 0:
+        return f"⚠️ Venceu há {abs(dias_restantes)} dia(s)", COR_ALERTA
+    if dias_restantes == 0:
+        return "⏰ Prazo é hoje!", COR_ANDAMENTO
+    if dias_restantes <= DIAS_ALERTA_PRAZO:
+        return f"⏰ Faltam {dias_restantes} dia(s)", COR_ANDAMENTO
+    return f"Faltam {dias_restantes} dia(s)", COR_TEXTO_SECUNDARIO
+
+
 DIRETORIO_DADOS = os.getenv("FLET_APP_STORAGE_DATA", ".")
-os.makedirs(DIRETORIO_DADOS, exist_ok=True)  # garante que a pasta existe
+os.makedirs(DIRETORIO_DADOS, exist_ok=True)
 CAMINHO_ARQUIVO_DADOS = os.path.join(DIRETORIO_DADOS, "missoes.json")
 
 
 def main(page: ft.Page):
-
-    # -----------------------------------------------------------
-    # CONFIGURAÇÃO GERAL (MOBILE)
-    # -----------------------------------------------------------
 
     page.title = "Central de Missões"
     page.theme_mode = ft.ThemeMode.DARK
@@ -41,41 +96,12 @@ def main(page: ft.Page):
     page.padding = 20
     page.scroll = ft.ScrollMode.AUTO
 
-    # =============================================================
-    # ESTADO DA APLICAÇÃO
-    #
-    # Nada de variáveis globais soltas (missao, recompensa, etapas...).
-    # Cada missão é um dicionário independente, guardado dentro de
-    # `estado.missoes`. Estrutura de cada missão:
-    #
-    # {
-    #     "id": str,
-    #     "titulo": str,
-    #     "recompensa": str,
-    #     "xp_total": int,
-    #     "xp_atual": int,
-    #     "concluida": bool,
-    #     "etapas": [
-    #         {"nome": str, "xp": int, "concluida": bool},
-    #         ...
-    #     ],
-    # }
-    # =============================================================
-
     class Estado:
         def __init__(self):
-            self.missoes = []          # lista de missões cadastradas
-            self.nova_missao = {}      # rascunho usado durante a criação
+            self.missoes = []
+            self.nova_missao = {}
 
     estado = Estado()
-
-    # =============================================================
-    # PERSISTÊNCIA (arquivo JSON)
-    #
-    # Gravamos os dados em um arquivo dentro da pasta de dados
-    # persistente do Flet, então eles continuam disponíveis mesmo
-    # depois de fechar e abrir o app de novo.
-    # =============================================================
 
     def salvar_estado():
         try:
@@ -93,10 +119,6 @@ def main(page: ft.Page):
             print(f"Erro ao carregar estado: {ex}")
             estado.missoes = []
 
-    # =============================================================
-    # FUNÇÕES AUXILIARES DE DADOS
-    # =============================================================
-
     def calcular_progresso(missao):
         if missao["xp_total"] == 0:
             return 0.0
@@ -112,17 +134,30 @@ def main(page: ft.Page):
         return None
 
     def distribuir_xp_por_etapas(xp_total, quantidade_etapas):
-        """Divide o xp_total entre as etapas sem perder resto na divisão."""
         base = xp_total // quantidade_etapas
         resto = xp_total % quantidade_etapas
 
         valores = [base] * quantidade_etapas
-        valores[-1] += resto  # a última etapa absorve o resto da divisão
+        valores[-1] += resto
         return valores
 
-    # =============================================================
-    # NAVEGAÇÃO
-    # =============================================================
+    def calcular_xp_por_categoria():
+        totais = {categoria: 0 for categoria in CATEGORIAS_GRAFICO}
+        for missao in estado.missoes:
+            categoria = missao.get("categoria", CATEGORIA_OUTRO)
+            totais[bucket_categoria(categoria)] += missao["xp_atual"]
+        return totais
+
+    def missoes_perto_do_prazo():
+        resultado = []
+        for missao in estado.missoes:
+            info = texto_e_cor_prazo(missao)
+            if info is None:
+                continue
+            texto, cor = info
+            if cor in (COR_ALERTA, COR_ANDAMENTO):
+                resultado.append((missao, texto))
+        return resultado
 
     def ir_para(tela_func, *args):
         page.clean()
@@ -133,9 +168,22 @@ def main(page: ft.Page):
         page.show_dialog(ft.SnackBar(ft.Text(mensagem), bgcolor="#d32f2f"))
         page.update()
 
-    # =============================================================
-    # COMPONENTES REUTILIZÁVEIS DE UI
-    # =============================================================
+    def notificar_prazos_proximos():
+        pendentes = missoes_perto_do_prazo()
+        if not pendentes:
+            return
+
+        partes = [f"{missao['titulo']} ({texto})" for missao, texto in pendentes]
+        mensagem = "⏰ Prazos para acompanhar: " + " | ".join(partes)
+
+        page.show_dialog(
+            ft.SnackBar(
+                ft.Text(mensagem),
+                bgcolor=COR_ANDAMENTO,
+                duration=6000,
+            )
+        )
+        page.update()
 
     def botao_grande(texto, on_click, cor=COR_PRIMARIA):
         return ft.ElevatedButton(
@@ -166,9 +214,17 @@ def main(page: ft.Page):
             border_radius=12,
         )
 
-    # =============================================================
-    # TELA: CENTRAL DE MISSÕES
-    # =============================================================
+    def etiqueta_categoria(categoria):
+        grupo = bucket_categoria(categoria)
+        cor = CORES_CATEGORIA.get(grupo, CORES_CATEGORIA[CATEGORIA_OUTRO])
+        icone = ICONE_CATEGORIA.get(grupo, ICONE_CATEGORIA[CATEGORIA_OUTRO])
+
+        return ft.Container(
+            content=ft.Text(f"{icone} {categoria}", size=11, weight="bold", color="#12121c"),
+            bgcolor=cor,
+            padding=ft.Padding(left=10, right=10, top=3, bottom=3),
+            border_radius=20,
+        )
 
     def tela_central():
 
@@ -179,7 +235,12 @@ def main(page: ft.Page):
         cards = [cartao_missao(missao) for missao in estado.missoes]
 
         if cards:
-            lista = ft.Column(cards, spacing=14, horizontal_alignment="center")
+            lista = ft.ReorderableListView(
+                controls=cards,
+                on_reorder=mudar_ordem_missoes,
+                width=320,
+                height=ALTURA_LISTA_MISSOES,
+            )
         else:
             lista = ft.Container(
                 content=ft.Text(
@@ -198,6 +259,16 @@ def main(page: ft.Page):
                     titulo_tela("Central de Missões"),
                     ft.Container(height=6),
                     botao_grande("➕ Nova missão", iniciar_nova_missao),
+                    ft.TextButton(
+                        "📊 Ver progresso por área",
+                        on_click=lambda e: ir_para(tela_dashboard),
+                    ),
+                    ft.Text(
+                        "Toque e segure um card para arrastar e reordenar",
+                        size=12,
+                        color=COR_TEXTO_SECUNDARIO,
+                        text_align="center",
+                    ) if cards else ft.Container(),
                     ft.Container(height=6),
                     lista,
                 ],
@@ -206,11 +277,25 @@ def main(page: ft.Page):
             )
         )
 
+    def mudar_ordem_missoes(e):
+        indice_antigo = e.old_index
+        indice_novo = e.new_index
+
+        if indice_novo > indice_antigo:
+            indice_novo -= 1
+
+        missao_movida = estado.missoes.pop(indice_antigo)
+        estado.missoes.insert(indice_novo, missao_movida)
+
+        salvar_estado()
+        ir_para(tela_central)
+
     def cartao_missao(missao):
 
         progresso = calcular_progresso(missao)
         concluidas = etapas_concluidas_count(missao)
         total_etapas = len(missao["etapas"])
+        categoria = missao.get("categoria", CATEGORIA_OUTRO)
 
         if missao["concluida"]:
             status_texto = "✅ Missão concluída"
@@ -219,41 +304,75 @@ def main(page: ft.Page):
             status_texto = "⏳ Em andamento"
             status_cor = COR_ANDAMENTO
 
-        return ft.Container(
-            content=ft.Column(
+        itens_card = [
+            ft.Row(
                 [
-                    ft.Row(
-                        [
-                            ft.Text(
-                                missao["titulo"],
-                                size=18,
-                                weight="bold",
-                                expand=True,
-                            ),
-                            ft.TextButton(
-                                "🗑",
-                                on_click=lambda e, m=missao: confirmar_exclusao(m),
-                            ),
-                        ],
-                    ),
-                    ft.ProgressBar(
-                        value=progresso,
-                        width=280,
-                        bgcolor=COR_BARRA_FUNDO,
-                        color=COR_PRIMARIA,
-                    ),
-                    ft.Text(f"{missao['xp_atual']} / {missao['xp_total']} XP", size=14),
                     ft.Text(
-                        f"Etapas concluídas: {concluidas}/{total_etapas}",
-                        size=13,
+                        missao["titulo"],
+                        size=18,
+                        weight="bold",
+                        expand=True,
+                    ),
+                    ft.Text(
+                        "⠿",
+                        size=18,
                         color=COR_TEXTO_SECUNDARIO,
                     ),
-                    ft.Text(status_texto, size=13, weight="bold", color=status_cor),
+                    ft.TextButton(
+                        "🗑",
+                        on_click=lambda e, m=missao: confirmar_exclusao(m),
+                    ),
                 ],
-                spacing=6,
             ),
+            etiqueta_categoria(categoria),
+        ]
+
+        if missao.get("data_inicio") or missao.get("data_fim"):
+            itens_card.append(
+                ft.Text(
+                    f"📅 {formatar_data_br(missao.get('data_inicio'))} → "
+                    f"{formatar_data_br(missao.get('data_fim'))}",
+                    size=12,
+                    color=COR_TEXTO_SECUNDARIO,
+                )
+            )
+
+        info_prazo = texto_e_cor_prazo(missao)
+        if info_prazo:
+            texto_prazo, cor_prazo = info_prazo
+            itens_card.append(
+                ft.Text(texto_prazo, size=12, weight="bold", color=cor_prazo)
+            )
+
+        itens_card += [
+            ft.ProgressBar(
+                value=progresso,
+                width=280,
+                bgcolor=COR_BARRA_FUNDO,
+                color=COR_PRIMARIA,
+            ),
+            ft.Text(f"{missao['xp_atual']} / {missao['xp_total']} XP", size=14),
+        ]
+
+        if total_etapas > 0:
+            itens_card.append(
+                ft.Text(
+                    f"Etapas concluídas: {concluidas}/{total_etapas}",
+                    size=13,
+                    color=COR_TEXTO_SECUNDARIO,
+                )
+            )
+
+        itens_card.append(
+            ft.Text(status_texto, size=13, weight="bold", color=status_cor)
+        )
+
+        return ft.Container(
+            key=missao["id"],
+            content=ft.Column(itens_card, spacing=6),
             bgcolor=COR_CARD,
             padding=16,
+            margin=ft.Margin(bottom=14),
             border_radius=16,
             width=320,
             on_click=lambda e, mid=missao["id"]: ir_para(tela_missao_detalhe, mid),
@@ -287,17 +406,74 @@ def main(page: ft.Page):
 
         page.show_dialog(dialogo)
 
-    # =============================================================
-    # FLUXO DE CRIAÇÃO DE MISSÃO
-    # Nova missão -> Nome -> Esforço -> Recompensa -> Qtd etapas
-    # -> Nome das etapas -> Salvar -> Central de Missões
-    # =============================================================
+    def tela_dashboard():
+
+        totais = calcular_xp_por_categoria()
+        maior_valor = max(totais.values())
+        maior_valor = maior_valor if maior_valor > 0 else 1
+
+        largura_maxima_barra = 240
+
+        linhas_grafico = []
+        for categoria in CATEGORIAS_GRAFICO:
+            valor = totais[categoria]
+            largura_barra = max(6, (valor / maior_valor) * largura_maxima_barra)
+            cor = CORES_CATEGORIA[categoria]
+            icone = ICONE_CATEGORIA[categoria]
+
+            linhas_grafico.append(
+                ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Text(f"{icone} {categoria}", size=14, weight="bold"),
+                                ft.Text(f"{valor} XP", size=13, color=COR_TEXTO_SECUNDARIO),
+                            ],
+                            width=280,
+                            alignment="spaceBetween",
+                        ),
+                        ft.Container(
+                            content=ft.Container(
+                                bgcolor=cor,
+                                width=largura_barra,
+                                height=18,
+                                border_radius=8,
+                            ),
+                            bgcolor=COR_BARRA_FUNDO,
+                            width=280,
+                            height=18,
+                            border_radius=8,
+                        ),
+                    ],
+                    spacing=6,
+                )
+            )
+
+        xp_total_geral = sum(totais.values())
+
+        page.add(
+            ft.Column(
+                [
+                    cabecalho_voltar(tela_central),
+                    titulo_tela("📊 Progresso por área", 22),
+                    ft.Text(
+                        f"Total acumulado: {xp_total_geral} XP",
+                        size=14,
+                        color=COR_TEXTO_SECUNDARIO,
+                    ),
+                    ft.Container(height=8),
+                    *linhas_grafico,
+                ],
+                horizontal_alignment="center",
+                spacing=18,
+            )
+        )
 
     def tela_nova_missao_nome():
 
         campo = campo_texto(
             "Nome da missão",
-            hint_text="Ex: escrever introdução do artigo",
+            hint_text="Ex: escrever a introdução do artigo",
             value=estado.nova_missao.get("titulo", ""),
         )
 
@@ -307,7 +483,7 @@ def main(page: ft.Page):
                 mostrar_erro("Digite um nome para a missão.")
                 return
             estado.nova_missao["titulo"] = titulo
-            ir_para(tela_nova_missao_esforco)
+            ir_para(tela_nova_missao_categoria)
 
         page.add(
             ft.Column(
@@ -317,6 +493,75 @@ def main(page: ft.Page):
                     ft.Text("Qual é a sua missão?", size=16),
                     campo,
                     botao_grande("Próximo ➡", avancar),
+                ],
+                horizontal_alignment="center",
+                spacing=16,
+            )
+        )
+
+    def tela_nova_missao_categoria():
+
+        def escolher_categoria(categoria):
+            estado.nova_missao["categoria"] = categoria
+            ir_para(tela_nova_missao_esforco)
+
+        def escolher_outro(e):
+            ir_para(tela_nova_missao_categoria_personalizada)
+
+        botoes_categoria = [
+            botao_grande(
+                f"{ICONE_CATEGORIA[categoria]} {categoria}",
+                (lambda e, c=categoria: escolher_categoria(c)),
+                cor=CORES_CATEGORIA[categoria],
+            )
+            for categoria in CATEGORIAS_FIXAS
+        ]
+
+        page.add(
+            ft.Column(
+                [
+                    cabecalho_voltar(tela_nova_missao_nome),
+                    titulo_tela("🏷️ Área da vida", 24),
+                    ft.Text(estado.nova_missao.get("titulo", ""), size=18),
+                    ft.Text(
+                        "Em qual área essa missão se encaixa?",
+                        size=14,
+                        color=COR_TEXTO_SECUNDARIO,
+                    ),
+                    *botoes_categoria,
+                    botao_grande(
+                        f"{ICONE_CATEGORIA[CATEGORIA_OUTRO]} Outra (personalizada)",
+                        escolher_outro,
+                        cor=CORES_CATEGORIA[CATEGORIA_OUTRO],
+                    ),
+                ],
+                horizontal_alignment="center",
+                spacing=14,
+            )
+        )
+
+    def tela_nova_missao_categoria_personalizada():
+
+        campo = campo_texto(
+            "Nome da categoria",
+            hint_text="Ex: Viagens, Família, Finanças",
+        )
+
+        def confirmar(e):
+            nome_categoria = (campo.value or "").strip()
+            if not nome_categoria:
+                mostrar_erro("Digite um nome para a categoria.")
+                return
+            estado.nova_missao["categoria"] = nome_categoria
+            ir_para(tela_nova_missao_esforco)
+
+        page.add(
+            ft.Column(
+                [
+                    cabecalho_voltar(tela_nova_missao_categoria),
+                    titulo_tela("✨ Nova categoria", 22),
+                    campo,
+                    botao_grande("Confirmar categoria", confirmar),
                 ],
                 horizontal_alignment="center",
                 spacing=16,
@@ -368,7 +613,7 @@ def main(page: ft.Page):
                 mostrar_erro("Digite uma recompensa para a missão.")
                 return
             estado.nova_missao["recompensa"] = recompensa
-            ir_para(tela_nova_missao_qtd_etapas)
+            ir_para(tela_nova_missao_datas)
 
         page.add(
             ft.Column(
@@ -384,55 +629,183 @@ def main(page: ft.Page):
             )
         )
 
-    def tela_nova_missao_qtd_etapas():
+    def tela_nova_missao_datas():
 
-        campo = campo_texto("Quantidade de etapas")
-        campo.keyboard_type = ft.KeyboardType.NUMBER
+        prazo_temp = {
+            "data_inicio": estado.nova_missao.get("data_inicio"),
+            "data_fim": estado.nova_missao.get("data_fim"),
+        }
+
+        texto_inicio = ft.Text(
+            f"📆 Início: {formatar_data_br(prazo_temp['data_inicio'])}"
+            if prazo_temp["data_inicio"]
+            else "📆 Início: não selecionada",
+            size=14,
+        )
+        texto_fim = ft.Text(
+            f"🏁 Término: {formatar_data_br(prazo_temp['data_fim'])}"
+            if prazo_temp["data_fim"]
+            else "🏁 Término: não selecionada",
+            size=14,
+        )
+
+        def selecionar_inicio(e):
+            if e.control.value:
+                prazo_temp["data_inicio"] = e.control.value.date().isoformat()
+                texto_inicio.value = f"📆 Início: {formatar_data_br(prazo_temp['data_inicio'])}"
+                page.update()
+
+        def selecionar_fim(e):
+            if e.control.value:
+                prazo_temp["data_fim"] = e.control.value.date().isoformat()
+                texto_fim.value = f"🏁 Término: {formatar_data_br(prazo_temp['data_fim'])}"
+                page.update()
+
+        seletor_inicio = ft.DatePicker(
+            first_date=datetime(2020, 1, 1),
+            last_date=datetime(2100, 12, 31),
+            on_change=selecionar_inicio,
+        )
+        seletor_fim = ft.DatePicker(
+            first_date=datetime(2020, 1, 1),
+            last_date=datetime(2100, 12, 31),
+            on_change=selecionar_fim,
+        )
 
         def avancar(e):
-            texto = (campo.value or "").strip()
+            data_inicio = prazo_temp["data_inicio"]
+            data_fim = prazo_temp["data_fim"]
 
-            if not texto.isdigit() or int(texto) <= 0:
-                mostrar_erro("Informe um número válido de etapas (maior que 0).")
+            if bool(data_inicio) != bool(data_fim):
+                mostrar_erro("Selecione as duas datas ou deixe o prazo em branco.")
                 return
 
-            ir_para(tela_nova_missao_nomes_etapas, int(texto))
+            if data_inicio and data_fim and date.fromisoformat(data_fim) < date.fromisoformat(data_inicio):
+                mostrar_erro("A data de término não pode ser antes da data de início.")
+                return
+
+            estado.nova_missao["data_inicio"] = data_inicio
+            estado.nova_missao["data_fim"] = data_fim
+            ir_para(tela_nova_missao_etapas)
+
+        def pular(e):
+            estado.nova_missao["data_inicio"] = None
+            estado.nova_missao["data_fim"] = None
+            ir_para(tela_nova_missao_etapas)
 
         page.add(
             ft.Column(
                 [
                     cabecalho_voltar(tela_central),
-                    titulo_tela("📌 Divida sua missão", 24),
-                    campo,
-                    botao_grande("Criar etapas", avancar),
+                    titulo_tela("📅 Prazo da missão", 22),
+                    ft.Text(
+                        "Definir um prazo é opcional. Toque nos botões para "
+                        "escolher as datas no calendário.",
+                        size=14,
+                        color=COR_TEXTO_SECUNDARIO,
+                        text_align="center",
+                    ),
+                    texto_inicio,
+                    ft.OutlinedButton(
+                        "Escolher data de início",
+                        on_click=lambda e: page.show_dialog(seletor_inicio),
+                    ),
+                    texto_fim,
+                    ft.OutlinedButton(
+                        "Escolher data de término",
+                        on_click=lambda e: page.show_dialog(seletor_fim),
+                    ),
+                    ft.Container(height=6),
+                    botao_grande("Próximo ➡", avancar),
+                    ft.TextButton(
+                        "Pular (missão sem prazo definido)",
+                        on_click=pular,
+                    ),
                 ],
                 horizontal_alignment="center",
-                spacing=16,
+                spacing=14,
             )
         )
 
-    def tela_nova_missao_nomes_etapas(quantidade):
+    def tela_nova_missao_etapas():
 
-        campos = [
-            campo_texto(f"Etapa {i + 1}") for i in range(quantidade)
-        ]
+        etapas_temp = estado.nova_missao.setdefault("etapas_temp", [])
 
-        def salvar(e):
-            nomes = [(c.value or "").strip() for c in campos]
+        lista_etapas = ft.Column(spacing=6)
 
-            if any(nome == "" for nome in nomes):
-                mostrar_erro("Preencha o nome de todas as etapas.")
+        campo_etapa = campo_texto(
+            "Nome da etapa",
+            hint_text="Ex: pesquisar referências",
+        )
+
+        def atualizar_lista():
+            lista_etapas.controls = [
+                ft.Row(
+                    [
+                        ft.Text(f"{i + 1}. {nome}", size=14, expand=True),
+                        ft.TextButton(
+                            "🗑",
+                            on_click=lambda e, indice=i: remover_etapa(indice),
+                        ),
+                    ],
+                    width=300,
+                )
+                for i, nome in enumerate(etapas_temp)
+            ]
+
+        def adicionar_etapa(e):
+            nome = (campo_etapa.value or "").strip()
+            if not nome:
+                mostrar_erro("Digite o nome da etapa antes de adicionar.")
                 return
+            etapas_temp.append(nome)
+            campo_etapa.value = ""
+            atualizar_lista()
+            page.update()
 
+        def remover_etapa(indice):
+            etapas_temp.pop(indice)
+            atualizar_lista()
+            page.update()
+
+        def finalizar(e):
+            if not etapas_temp:
+                mostrar_erro(
+                    "Adicione ao menos uma etapa, ou toque em "
+                    "'Missão sem etapas' para pular."
+                )
+                return
+            nomes = list(etapas_temp)
+            estado.nova_missao.pop("etapas_temp", None)
             finalizar_criacao_missao(nomes)
+
+        def pular(e):
+            estado.nova_missao.pop("etapas_temp", None)
+            finalizar_criacao_missao([])
+
+        atualizar_lista()
 
         page.add(
             ft.Column(
                 [
-                    cabecalho_voltar(tela_nova_missao_qtd_etapas),
-                    titulo_tela("📝 Nomeie as etapas", 22),
-                    *campos,
-                    botao_grande("Salvar missão", salvar),
+                    cabecalho_voltar(tela_nova_missao_datas),
+                    titulo_tela("📌 Etapas da missão", 22),
+                    ft.Text(
+                        "Adicione as etapas uma de cada vez, sem precisar "
+                        "definir a quantidade antes. É opcional.",
+                        size=14,
+                        color=COR_TEXTO_SECUNDARIO,
+                        text_align="center",
+                    ),
+                    campo_etapa,
+                    botao_grande("➕ Adicionar etapa", adicionar_etapa),
+                    lista_etapas,
+                    ft.Container(height=6),
+                    botao_grande("✅ Próximo", finalizar),
+                    ft.TextButton(
+                        "Pular (missão sem etapas)",
+                        on_click=pular,
+                    ),
                 ],
                 horizontal_alignment="center",
                 spacing=14,
@@ -442,16 +815,22 @@ def main(page: ft.Page):
     def finalizar_criacao_missao(nomes_etapas):
 
         xp_total = estado.nova_missao["xp_total"]
-        valores_xp = distribuir_xp_por_etapas(xp_total, len(nomes_etapas))
 
-        etapas = [
-            {"nome": nome, "xp": xp, "concluida": False}
-            for nome, xp in zip(nomes_etapas, valores_xp)
-        ]
+        if nomes_etapas:
+            valores_xp = distribuir_xp_por_etapas(xp_total, len(nomes_etapas))
+            etapas = [
+                {"nome": nome, "xp": xp, "concluida": False}
+                for nome, xp in zip(nomes_etapas, valores_xp)
+            ]
+        else:
+            etapas = []
 
         missao = {
             "id": str(uuid.uuid4()),
             "titulo": estado.nova_missao["titulo"],
+            "categoria": estado.nova_missao.get("categoria", CATEGORIA_OUTRO),
+            "data_inicio": estado.nova_missao.get("data_inicio"),
+            "data_fim": estado.nova_missao.get("data_fim"),
             "recompensa": estado.nova_missao["recompensa"],
             "xp_total": xp_total,
             "xp_atual": 0,
@@ -465,10 +844,6 @@ def main(page: ft.Page):
 
         ir_para(tela_central)
 
-    # =============================================================
-    # TELA: DETALHE / PROGRESSO DA MISSÃO
-    # =============================================================
-
     def tela_missao_detalhe(missao_id):
 
         missao = buscar_missao(missao_id)
@@ -478,6 +853,7 @@ def main(page: ft.Page):
             return
 
         progresso = calcular_progresso(missao)
+        categoria = missao.get("categoria", CATEGORIA_OUTRO)
 
         botoes_etapas = []
 
@@ -497,6 +873,25 @@ def main(page: ft.Page):
         corpo = [
             cabecalho_voltar(tela_central),
             titulo_tela(missao["titulo"], 24),
+            etiqueta_categoria(categoria),
+        ]
+
+        if missao.get("data_inicio") or missao.get("data_fim"):
+            corpo.append(
+                ft.Text(
+                    f"📅 {formatar_data_br(missao.get('data_inicio'))} → "
+                    f"{formatar_data_br(missao.get('data_fim'))}",
+                    size=13,
+                    color=COR_TEXTO_SECUNDARIO,
+                )
+            )
+
+        info_prazo = texto_e_cor_prazo(missao)
+        if info_prazo:
+            texto_prazo, cor_prazo = info_prazo
+            corpo.append(ft.Text(texto_prazo, size=13, weight="bold", color=cor_prazo))
+
+        corpo += [
             ft.ProgressBar(
                 value=progresso, width=300, bgcolor=COR_BARRA_FUNDO, color=COR_PRIMARIA
             ),
@@ -512,8 +907,26 @@ def main(page: ft.Page):
                 ft.Container(height=6),
             ]
 
-        corpo.append(ft.Text("Etapas:", size=16, weight="bold"))
-        corpo.extend(botoes_etapas)
+        if missao["etapas"]:
+            corpo.append(ft.Text("Etapas:", size=16, weight="bold"))
+            corpo.extend(botoes_etapas)
+        elif not missao["concluida"]:
+            corpo.append(
+                ft.Text(
+                    "Esta missão não foi dividida em etapas.",
+                    size=13,
+                    color=COR_TEXTO_SECUNDARIO,
+                    text_align="center",
+                )
+            )
+            corpo.append(
+                ft.ElevatedButton(
+                    "✅ Concluir missão",
+                    width=300,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=lambda e, m=missao: concluir_missao_sem_etapas(m),
+                )
+            )
 
         page.add(
             ft.Column(corpo, horizontal_alignment="center", spacing=12)
@@ -532,9 +945,12 @@ def main(page: ft.Page):
             salvar_estado()
             ir_para(tela_missao_detalhe, missao["id"])
 
-    # =============================================================
-    # TELA: MISSÃO CONCLUÍDA (RECOMPENSA)
-    # =============================================================
+    def concluir_missao_sem_etapas(missao):
+
+        missao["xp_atual"] = missao["xp_total"]
+        missao["concluida"] = True
+        salvar_estado()
+        ir_para(tela_missao_concluida, missao["id"])
 
     def tela_missao_concluida(missao_id):
 
@@ -560,12 +976,9 @@ def main(page: ft.Page):
             )
         )
 
-    # =============================================================
-    # INÍCIO DO APP
-    # =============================================================
-
     carregar_estado()
     tela_central()
+    notificar_prazos_proximos()
 
 
 if __name__ == "__main__":
