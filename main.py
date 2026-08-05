@@ -531,7 +531,10 @@ def main(page: ft.Page):
             ir_para(tela_nova_missao_nome)
 
         missoes_pendentes = [missao for missao in estado.missoes if not missao["concluida"]]
-        cards = [cartao_missao(missao, tela_central) for missao in missoes_pendentes]
+        cards = [
+            cartao_missao(missao, tela_central, indice)
+            for indice, missao in enumerate(missoes_pendentes)
+        ]
 
         if cards:
             lista = ft.ReorderableListView(
@@ -539,6 +542,7 @@ def main(page: ft.Page):
                 on_reorder=mudar_ordem_missoes,
                 width=320,
                 height=ALTURA_LISTA_MISSOES,
+                show_default_drag_handles=False,
             )
         else:
             lista = ft.Container(
@@ -573,7 +577,7 @@ def main(page: ft.Page):
                         wrap=True,
                     ),
                     ft.Text(
-                        "Toque e segure um card para arrastar e reordenar",
+                        "Toque e arraste qualquer parte do card para reordenar",
                         size=12,
                         color=COR_TEXTO_SECUNDARIO,
                         text_align="center",
@@ -636,7 +640,21 @@ def main(page: ft.Page):
         salvar_estado()
         ir_para(tela_central)
 
-    def cartao_missao(missao, origem=None):
+    def cartao_missao(missao, origem=None, indice=None):
+        """Monta o card de uma missão.
+
+        Quando `indice` é informado, aparece uma alça de arrastar (⠿) no
+        canto do card, usada para reordenar dentro de um
+        ft.ReorderableListView. O restante do card continua clicável
+        normalmente (abre os detalhes da missão) e o botão 🗑 continua
+        funcionando.
+
+        Importante: no Flet, se o ReorderableDraggable envolver o card
+        inteiro, ele captura todos os toques daquela área e os cliques
+        internos (abrir detalhes, excluir) param de funcionar. Por isso
+        a alça de arrastar precisa ser um elemento pequeno e separado,
+        não o card inteiro.
+        """
 
         progresso = calcular_progresso(missao)
         concluidas = etapas_concluidas_count(missao)
@@ -650,26 +668,40 @@ def main(page: ft.Page):
             status_texto = "⏳ Em andamento"
             status_cor = COR_ANDAMENTO
 
-        itens_card = [
-            ft.Row(
-                [
-                    ft.Text(
-                        missao["titulo"],
-                        size=18,
-                        weight="bold",
-                        expand=True,
-                    ),
-                    ft.Text(
-                        "⠿",
-                        size=18,
-                        color=COR_TEXTO_SECUNDARIO,
-                    ),
-                    ft.TextButton(
-                        "🗑",
-                        on_click=lambda e, m=missao, org=origem: confirmar_exclusao(m, org),
-                    ),
-                ],
+        cabecalho_linha = [
+            ft.Text(
+                missao["titulo"],
+                size=18,
+                weight="bold",
+                expand=True,
             ),
+        ]
+
+        if indice is not None:
+            cabecalho_linha.append(
+                ft.ReorderableDraggable(
+                    key=f"alca_{missao['id']}",
+                    index=indice,
+                    content=ft.Container(
+                        content=ft.Text(
+                            "⠿",
+                            size=22,
+                            color=COR_TEXTO_SECUNDARIO,
+                        ),
+                        padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                    ),
+                )
+            )
+
+        cabecalho_linha.append(
+            ft.TextButton(
+                "🗑",
+                on_click=lambda e, m=missao, org=origem: confirmar_exclusao(m, org),
+            )
+        )
+
+        itens_card = [
+            ft.Row(cabecalho_linha),
             etiqueta_categoria(categoria),
         ]
 
@@ -718,6 +750,16 @@ def main(page: ft.Page):
             border_radius=16,
             width=320,
             on_click=lambda e, mid=missao["id"], org=origem: ir_para(tela_missao_detalhe, mid, org),
+        )
+
+        if indice is None:
+            conteudo.key = missao["id"]
+            return conteudo
+
+        return ft.ReorderableDraggable(
+            key=missao["id"],
+            index=indice,
+            content=conteudo,
         )
 
     def confirmar_exclusao(missao, origem=None):
