@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/Meu app de tarefas.iml" filepath="$PROJECT_DIR$/.idea/Meu app de tarefas.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/xquest.iml" filepath="$PROJECT_DIR$/.idea/xquest.iml" />
     </modules>
   </component>
 </project>
