@@ -330,7 +330,7 @@ def main(page: ft.Page):
         return ft.Container(
             content=ft.Text(f"{icone} {categoria}", size=11, weight="bold", color="#12121c"),
             bgcolor=cor,
-            padding=ft.padding.only(left=10, right=10, top=3, bottom=3),
+            padding=ft.Padding.only(left=10, right=10, top=3, bottom=3),
             border_radius=20,
         )
 
